@@ -19,6 +19,15 @@ function buildCineSrcUrl(type, tmdbId, season, episode, opts = {}) {
 
   const params = new URLSearchParams();
 
+  // Force your preferred server profile (e.g., surge)
+  params.set("server", "surge"); 
+
+  // --- ADD FEBBOX PREMIUM ACCESS TOKEN ---
+  const febboxToken = process.env.FEBBOX_TOKEN;
+  if (febboxToken) {
+    params.set("febbox", febboxToken);
+  }
+
   if (opts.autoskip)         params.set("autoskip",  "true");
   if (opts.autonext === false) params.set("autonext", "false");
   if (opts.quality)         params.set("quality",   opts.quality);
