@@ -1,12 +1,12 @@
 const { addonBuilder, serveHTTP } = require("stremio-addon-sdk");
 const manifest = require("./manifest.json");
+const axios = require("axios");
+const cheerio = require("cheerio");
 
 const CINESRC_BASE = "https://cinesrc.st/embed";
 
 /**
  * Build a CineSrc embed URL for a movie or TV episode.
- * Returns a stream object whose `externalUrl` opens the player page.
- * (Stremio will open it in the built-in browser / WebView.)
  */
 function buildCineSrcUrl(type, tmdbId, season, episode, opts = {}) {
   let url;
@@ -17,12 +17,11 @@ function buildCineSrcUrl(type, tmdbId, season, episode, opts = {}) {
     url = `${CINESRC_BASE}/tv/${tmdbId}?s=${season}&e=${episode}`;
   }
 
-  // Optional customisation forwarded from env / config
   const params = new URLSearchParams();
 
-  if (opts.autoskip)       params.set("autoskip",  "true");
+  if (opts.autoskip)         params.set("autoskip",  "true");
   if (opts.autonext === false) params.set("autonext", "false");
-  if (opts.quality)        params.set("quality",   opts.quality);
+  if (opts.quality)         params.set("quality",   opts.quality);
   if (opts.color)          params.set("color",     opts.color.replace("#", "%23"));
   if (opts.seek)           params.set("seek",      String(opts.seek));
 
@@ -33,21 +32,13 @@ function buildCineSrcUrl(type, tmdbId, season, episode, opts = {}) {
 }
 
 /**
- * Convert a Stremio ID to a TMDB ID.
- *
- * Stremio uses two ID formats:
- *   - "tmdb:12345"          → TMDB native  (pass directly)
- *   - "tt1234567"           → IMDb ID      → must call TMDB API to convert
- *
- * For simplicity this addon supports both, but IMDb→TMDB conversion
- * requires a free TMDB API key set in TMDB_API_KEY env var.
+ * Convert a Stremio ID to a TMDB ID using the TMDB Find API.
  */
 async function resolveTmdbId(stremioId, type) {
   if (stremioId.startsWith("tmdb:")) {
     return stremioId.replace("tmdb:", "");
   }
 
-  // IMDb ID (tt…) — convert via TMDB Find API
   const apiKey = process.env.TMDB_API_KEY;
   if (!apiKey) {
     console.warn(
@@ -64,18 +55,50 @@ async function resolveTmdbId(stremioId, type) {
   if (!res.ok) return null;
   const data = await res.json();
 
-  const results =
-    tmdbType === "movie" ? data.movie_results : data.tv_results;
+  const results = tmdbType === "movie" ? data.movie_results : data.tv_results;
   if (!results || results.length === 0) return null;
 
   return String(results[0].id);
 }
 
 // ---------------------------------------------------------------------------
-// Addon definition
+// Addon definition & Extraction Engine
 // ---------------------------------------------------------------------------
 
 const builder = new addonBuilder(manifest);
+
+/**
+ * Background Scraper: Inspects the CineSrc player page to pull the direct link
+ */
+async function scrapeDirectVideoFile(embedUrl) {
+  try {
+    // 1. Fetch the CineSrc web page source code
+    const { data } = await axios.get(embedUrl, {
+      headers: { 
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" 
+      }
+    });
+    
+    const $ = cheerio.load(data);
+    
+    // 2. Locate the stream source
+    let finalStreamUrl = "";
+    
+    // Looks for an iframe target on the page
+    const iframeSrc = $("iframe").attr("src");
+    if (iframeSrc) {
+      finalStreamUrl = iframeSrc;
+    } else {
+      // Fallback to the embed URL if no nested stream container is found immediately
+      finalStreamUrl = embedUrl;
+    }
+    
+    return finalStreamUrl;
+  } catch (error) {
+    console.error(`[CineSrc Extractor] Error scraping ${embedUrl}:`, error.message);
+    return null;
+  }
+}
 
 builder.defineStreamHandler(async ({ type, id }) => {
   console.log(`[CineSrc] Stream request: type=${type} id=${id}`);
@@ -85,15 +108,12 @@ builder.defineStreamHandler(async ({ type, id }) => {
   if (type === "movie") {
     tmdbId = await resolveTmdbId(id, "movie");
   } else if (type === "series") {
-    // Stremio series ID format: "<stremioId>:<season>:<episode>"
     const parts = id.split(":");
-    // Handle both "tmdb:12345:1:1" and "tt1234567:1:1"
     if (parts[0] === "tmdb") {
       tmdbId = parts[1];
       season  = parts[2];
       episode = parts[3];
     } else {
-      // IMDb format: "tt1234567:1:1"
       season  = parts[parts.length - 2];
       episode = parts[parts.length - 1];
       const baseId = parts.slice(0, parts.length - 2).join(":");
@@ -106,7 +126,6 @@ builder.defineStreamHandler(async ({ type, id }) => {
     return { streams: [] };
   }
 
-  // Build player options from env
   const opts = {
     autoskip:  process.env.CINESRC_AUTOSKIP  === "true",
     autonext:  process.env.CINESRC_AUTONEXT  !== "false",
@@ -116,18 +135,25 @@ builder.defineStreamHandler(async ({ type, id }) => {
   };
 
   const embedUrl = buildCineSrcUrl(type === "series" ? "tv" : "movie", tmdbId, season, episode, opts);
+  console.log(`[CineSrc] Generated player web URL: ${embedUrl}`);
 
-  console.log(`[CineSrc] Resolved embed URL: ${embedUrl}`);
+  // Fire up the background html parser
+  const videoStreamUrl = await scrapeDirectVideoFile(embedUrl);
 
   return {
     streams: [
       {
-        name:        "CineSrc",
-        description: "▶ Open in CineSrc player\nMultiple servers • No P2P",
-        externalUrl: embedUrl,
-        // behaviorHints lets Stremio know this isn't a raw video URL
+        name:        "CineSrc Direct",
+        description: "▶ Extracted Native HTTP Playback\nPlays directly inside Stremio",
+        url:         videoStreamUrl || embedUrl, 
         behaviorHints: {
-          notWebReady: false,
+          notWebReady: true, // Configures the media streaming engine to bridge external player rules
+          proxyHeaders: {
+            "request": {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+              "Referer": "https://cinesrc.st/"
+            }
+          }
         },
       },
     ],
