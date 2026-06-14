@@ -6,7 +6,7 @@ const cheerio = require("cheerio");
 const CINESRC_BASE = "https://cinesrc.st/embed";
 
 /**
- * Build a CineSrc embed URL for a movie or TV episode.
+ * Build a CineSrc embed URL for a movie or TV episode with Surge & Febbox settings.
  */
 function buildCineSrcUrl(type, tmdbId, season, episode, opts = {}) {
   let url;
@@ -19,10 +19,10 @@ function buildCineSrcUrl(type, tmdbId, season, episode, opts = {}) {
 
   const params = new URLSearchParams();
 
-  // Force your preferred server profile (e.g., surge)
+  // Forces the Surge server
   params.set("server", "surge"); 
 
-  // --- ADD FEBBOX PREMIUM ACCESS TOKEN ---
+  // Injects the Febbox premium token from your Hugging Face secrets if available
   const febboxToken = process.env.FEBBOX_TOKEN;
   if (febboxToken) {
     params.set("febbox", febboxToken);
@@ -81,7 +81,6 @@ const builder = new addonBuilder(manifest);
  */
 async function scrapeDirectVideoFile(embedUrl) {
   try {
-    // 1. Fetch the CineSrc web page source code with premium/server parameters attached
     const { data } = await axios.get(embedUrl, {
       headers: { 
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -90,57 +89,31 @@ async function scrapeDirectVideoFile(embedUrl) {
       }
     });
 
-    // Convert the data payload safely to a string for pattern matching
     const htmlString = typeof data === 'string' ? data : JSON.stringify(data);
     
-    // 2. Scan the body for an explicit Master Playlist path (.m3u8)
-    // This regular expression captures standard and premium HLS playback assets
+    // Look for an explicit .m3u8 target stream inside the page source
     const m3u8Regex = /(https?:\/\/[^"\s']+\.m3u8[^"\s']*)/i;
     const match = htmlString.match(m3u8Regex);
     
     if (match && match[0]) {
-      // Clean up any backslash JSON escaping characters
       let cleanUrl = match[0].replace(/\\/g, ''); 
-      console.log(`[CineSrc Extractor] Isolated direct target stream: ${cleanUrl}`);
+      console.log(`[CineSrc Extractor] Found Master Playlist: ${cleanUrl}`);
       return cleanUrl;
     }
     
-    // 3. Fallback: If CineSrc wraps the Surge/Febbox player inside an inner iframe, find it
-    const cheerio = require('cheerio');
+    // Fallback if it is embedded inside an inner iframe container
     const $ = cheerio.load(data);
     const iframeSrc = $("iframe").attr("src");
-    
     if (iframeSrc) {
       console.log(`[CineSrc Extractor] Found nested player frame: ${iframeSrc}`);
       return iframeSrc;
     }
 
-    console.warn("[CineSrc Extractor] No direct multimedia track isolated in primary frame.");
-    return embedUrl; // Safe fallback so Stremio doesn't instantly crash
-  } catch (error) {
-    console.error(`[CineSrc Extractor] Critical error fetching ${embedUrl}:`, error.message);
-    return null;
-  }
-};
-    
-    const $ = cheerio.load(data);
-    
-    // 2. Locate the stream source
-    let finalStreamUrl = "";
-    
-    // Looks for an iframe target on the page
-    const iframeSrc = $("iframe").attr("src");
-    if (iframeSrc) {
-      finalStreamUrl = iframeSrc;
-    } else {
-      // Fallback to the embed URL if no nested stream container is found immediately
-      finalStreamUrl = embedUrl;
-    }
-    
-    return finalStreamUrl;
+    console.warn("[CineSrc Extractor] No direct stream asset isolated. Falling back to embed.");
+    return embedUrl; 
   } catch (error) {
     console.error(`[CineSrc Extractor] Error scraping ${embedUrl}:`, error.message);
-    return null;
+    return embedUrl;
   }
 }
 
@@ -181,7 +154,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
   const embedUrl = buildCineSrcUrl(type === "series" ? "tv" : "movie", tmdbId, season, episode, opts);
   console.log(`[CineSrc] Generated player web URL: ${embedUrl}`);
 
-  // Fire up the background html parser
+  // Run the background scraper
   const videoStreamUrl = await scrapeDirectVideoFile(embedUrl);
 
   return {
@@ -189,13 +162,14 @@ builder.defineStreamHandler(async ({ type, id }) => {
       {
         name:        "CineSrc Direct",
         description: "▶ Extracted Native HTTP Playback\nPlays directly inside Stremio",
-        url:         videoStreamUrl || embedUrl, 
+        url:         videoStreamUrl, 
         behaviorHints: {
-          notWebReady: true, // Configures the media streaming engine to bridge external player rules
+          notWebReady: true,
           proxyHeaders: {
             "request": {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-              "Referer": "https://cinesrc.st/"
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Referer": "https://cinesrc.st/",
+              "Origin": "https://cinesrc.st"
             }
           }
         },
