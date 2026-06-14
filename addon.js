@@ -81,75 +81,50 @@ const builder = new addonBuilder(manifest);
  */
 async function scrapeDirectVideoFile(embedUrl) {
   try {
-    const { data } = await axios.get(embedUrl, {
+    // 1. Convert the embed URL to target the bootstrap endpoint directly
+    // This shifts from loading the HTML layout to requesting the raw JSON data configuration
+    const bootstrapUrl = embedUrl.replace('/embed/', '/api/c/bootstrap/');
+    
+    console.log(`[CineSrc API] Intercepting internal configuration at: ${bootstrapUrl}`);
+
+    // 2. Query the endpoint using authorization headers matching your setup
+    const response = await axios.get(bootstrapUrl, {
       headers: { 
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Referer": "https://cinesrc.st/",
-        "Origin": "https://cinesrc.st"
+        "Origin": "https://cinesrc.st",
+        "Accept": "application/json"
       }
     });
 
-    const htmlString = typeof data === 'string' ? data : JSON.stringify(data);
+    // 3. Inspect the JSON payload response for stream urls or source objects
+    // We stringify the data block to apply an immediate regex sweep across the raw variables
+    const dataString = JSON.stringify(response.data);
     
-    // Look for an explicit .m3u8 target stream inside the page source
+    // Look for any clean .m3u8 master file patterns embedded inside the response keys
     const m3u8Regex = /(https?:\/\/[^"\s']+\.m3u8[^"\s']*)/i;
-    const match = htmlString.match(m3u8Regex);
+    const match = dataString.match(m3u8Regex);
     
     if (match && match[0]) {
       let cleanUrl = match[0].replace(/\\/g, ''); 
-      console.log(`[CineSrc Extractor] Found Master Playlist: ${cleanUrl}`);
+      console.log(`[CineSrc API] Stream isolated out of bootstrap structure: ${cleanUrl}`);
       return cleanUrl;
     }
-    
-    // Fallback if it is embedded inside an inner iframe container
-    const $ = cheerio.load(data);
-    const iframeSrc = $("iframe").attr("src");
-    if (iframeSrc) {
-      console.log(`[CineSrc Extractor] Found nested player frame: ${iframeSrc}`);
-      return iframeSrc;
+
+    // 4. Fallback trace if the stream array key uses standard variable names
+    if (response.data && response.data.url) return response.data.url;
+    if (response.data && response.data.file) return response.data.file;
+    if (response.data && response.data.sources && response.data.sources[0]) {
+      return response.data.sources[0].file || response.data.sources[0].url;
     }
 
-    console.warn("[CineSrc Extractor] No direct stream asset isolated. Falling back to embed.");
+    console.warn("[CineSrc API] Bootstrap data gathered but no direct file URL matched inside.");
     return embedUrl; 
   } catch (error) {
-    console.error(`[CineSrc Extractor] Error scraping ${embedUrl}:`, error.message);
+    console.error(`[CineSrc API] Error querying internal player bootstrap path:`, error.message);
     return embedUrl;
   }
 }
-
-builder.defineStreamHandler(async ({ type, id }) => {
-  console.log(`[CineSrc] Stream request: type=${type} id=${id}`);
-
-  let tmdbId, season, episode;
-
-  if (type === "movie") {
-    tmdbId = await resolveTmdbId(id, "movie");
-  } else if (type === "series") {
-    const parts = id.split(":");
-    if (parts[0] === "tmdb") {
-      tmdbId = parts[1];
-      season  = parts[2];
-      episode = parts[3];
-    } else {
-      season  = parts[parts.length - 2];
-      episode = parts[parts.length - 1];
-      const baseId = parts.slice(0, parts.length - 2).join(":");
-      tmdbId = await resolveTmdbId(baseId, "series");
-    }
-  }
-
-  if (!tmdbId) {
-    console.warn("[CineSrc] Could not resolve TMDB ID – returning empty.");
-    return { streams: [] };
-  }
-
-  const opts = {
-    autoskip:  process.env.CINESRC_AUTOSKIP  === "true",
-    autonext:  process.env.CINESRC_AUTONEXT  !== "false",
-    quality:   process.env.CINESRC_QUALITY   || "",
-    color:     process.env.CINESRC_COLOR     || "#e50914",
-    seek:      Number(process.env.CINESRC_SEEK) || 10,
-  };
 
   const embedUrl = buildCineSrcUrl(type === "series" ? "tv" : "movie", tmdbId, season, episode, opts);
   console.log(`[CineSrc] Generated player web URL: ${embedUrl}`);
