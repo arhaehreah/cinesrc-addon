@@ -1,3 +1,12 @@
+---
+title: CineSrc Stremio Addon
+emoji: 🎬
+colorFrom: red
+colorTo: black
+sdk: docker
+app_port: 7860
+pinned: false
+---
 # CineSrc Stremio Addon
 
 A Stremio addon that delivers movie and TV-show streams via **CineSrc** — multiple servers, no P2P, direct HTTP playback through an embed player.
