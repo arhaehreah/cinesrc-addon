@@ -68,7 +68,7 @@ async function resolveTmdbId(stremioId, type) {
   if (!results || results.length === 0) return null;
 
   return String(results[0].id);
-};
+}
 
 // ---------------------------------------------------------------------------
 // Addon definition & Extraction Engine
@@ -82,7 +82,6 @@ const builder = new addonBuilder(manifest);
 async function scrapeDirectVideoFile(embedUrl) {
   try {
     // 1. Convert the embed URL to target the bootstrap endpoint directly
-    // This shifts from loading the HTML layout to requesting the raw JSON data configuration
     const bootstrapUrl = embedUrl.replace('/embed/', '/api/c/bootstrap/');
     
     console.log(`[CineSrc API] Intercepting internal configuration at: ${bootstrapUrl}`);
@@ -98,7 +97,6 @@ async function scrapeDirectVideoFile(embedUrl) {
     });
 
     // 3. Inspect the JSON payload response for stream urls or source objects
-    // We stringify the data block to apply an immediate regex sweep across the raw variables
     const dataString = JSON.stringify(response.data);
     
     // Look for any clean .m3u8 master file patterns embedded inside the response keys
@@ -125,6 +123,41 @@ async function scrapeDirectVideoFile(embedUrl) {
     return embedUrl;
   }
 }
+
+// Re-added the missing async stream handler block wrapper
+builder.defineStreamHandler(async ({ type, id }) => {
+  console.log(`[CineSrc] Stream request: type=${type} id=${id}`);
+
+  let tmdbId, season, episode;
+
+  if (type === "movie") {
+    tmdbId = await resolveTmdbId(id, "movie");
+  } else if (type === "series") {
+    const parts = id.split(":");
+    if (parts[0] === "tmdb") {
+      tmdbId = parts[1];
+      season  = parts[2];
+      episode = parts[3];
+    } else {
+      season  = parts[parts.length - 2];
+      episode = parts[parts.length - 1];
+      const baseId = parts.slice(0, parts.length - 2).join(":");
+      tmdbId = await resolveTmdbId(baseId, "series");
+    }
+  }
+
+  if (!tmdbId) {
+    console.warn("[CineSrc] Could not resolve TMDB ID – returning empty.");
+    return { streams: [] };
+  }
+
+  const opts = {
+    autoskip:  process.env.CINESRC_AUTOSKIP  === "true",
+    autonext:  process.env.CINESRC_AUTONEXT  !== "false",
+    quality:   process.env.CINESRC_QUALITY   || "",
+    color:     process.env.CINESRC_COLOR     || "#e50914",
+    seek:      Number(process.env.CINESRC_SEEK) || 10,
+  };
 
   const embedUrl = buildCineSrcUrl(type === "series" ? "tv" : "movie", tmdbId, season, episode, opts);
   console.log(`[CineSrc] Generated player web URL: ${embedUrl}`);
