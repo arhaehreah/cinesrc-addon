@@ -2,7 +2,7 @@
 title: CineSrc Stremio Addon
 emoji: 🎬
 colorFrom: red
-colorTo: grey
+colorTo: gray
 sdk: docker
 app_port: 7860
 pinned: false
