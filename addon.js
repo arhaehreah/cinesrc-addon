@@ -81,12 +81,47 @@ const builder = new addonBuilder(manifest);
  */
 async function scrapeDirectVideoFile(embedUrl) {
   try {
-    // 1. Fetch the CineSrc web page source code
+    // 1. Fetch the CineSrc web page source code with premium/server parameters attached
     const { data } = await axios.get(embedUrl, {
       headers: { 
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" 
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://cinesrc.st/",
+        "Origin": "https://cinesrc.st"
       }
     });
+
+    // Convert the data payload safely to a string for pattern matching
+    const htmlString = typeof data === 'string' ? data : JSON.stringify(data);
+    
+    // 2. Scan the body for an explicit Master Playlist path (.m3u8)
+    // This regular expression captures standard and premium HLS playback assets
+    const m3u8Regex = /(https?:\/\/[^"\s']+\.m3u8[^"\s']*)/i;
+    const match = htmlString.match(m3u8Regex);
+    
+    if (match && match[0]) {
+      // Clean up any backslash JSON escaping characters
+      let cleanUrl = match[0].replace(/\\/g, ''); 
+      console.log(`[CineSrc Extractor] Isolated direct target stream: ${cleanUrl}`);
+      return cleanUrl;
+    }
+    
+    // 3. Fallback: If CineSrc wraps the Surge/Febbox player inside an inner iframe, find it
+    const cheerio = require('cheerio');
+    const $ = cheerio.load(data);
+    const iframeSrc = $("iframe").attr("src");
+    
+    if (iframeSrc) {
+      console.log(`[CineSrc Extractor] Found nested player frame: ${iframeSrc}`);
+      return iframeSrc;
+    }
+
+    console.warn("[CineSrc Extractor] No direct multimedia track isolated in primary frame.");
+    return embedUrl; // Safe fallback so Stremio doesn't instantly crash
+  } catch (error) {
+    console.error(`[CineSrc Extractor] Critical error fetching ${embedUrl}:`, error.message);
+    return null;
+  }
+};
     
     const $ = cheerio.load(data);
     
