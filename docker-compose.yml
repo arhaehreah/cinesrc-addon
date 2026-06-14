@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  cinesrc-addon:
+    build: .
+    container_name: cinesrc-stremio-addon
+    restart: unless-stopped
+    ports:
+      - "7860:7860"
+    environment:
+      PORT: 7860
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+      CINESRC_AUTOSKIP: ${CINESRC_AUTOSKIP:-false}
+      CINESRC_AUTONEXT: ${CINESRC_AUTONEXT:-true}
+      CINESRC_QUALITY: ${CINESRC_QUALITY:-1080}
+      CINESRC_COLOR: ${CINESRC_COLOR:-#e50914}
+      CINESRC_SEEK: ${CINESRC_SEEK:-10}

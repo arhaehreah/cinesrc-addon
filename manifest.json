@@ -1,0 +1,15 @@
+{
+  "id": "community.cinesrc.streams",
+  "version": "1.0.0",
+  "name": "CineSrc Streams",
+  "description": "Stream movies and TV shows via CineSrc — multiple servers, no P2P, direct HTTP playback.",
+  "logo": "https://cinesrc.st/favicon.ico",
+  "catalogs": [],
+  "resources": ["stream"],
+  "types": ["movie", "series"],
+  "idPrefixes": ["tt", "tmdb:"],
+  "behaviorHints": {
+    "configurable": true,
+    "configurationRequired": false
+  }
+}
