@@ -68,7 +68,7 @@ async function resolveTmdbId(stremioId, type) {
   if (!results || results.length === 0) return null;
 
   return String(results[0].id);
-}
+};
 
 // ---------------------------------------------------------------------------
 // Addon definition & Extraction Engine
